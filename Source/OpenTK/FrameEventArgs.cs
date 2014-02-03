@@ -36,7 +36,7 @@ namespace OpenTK
     /// </summary>
     public class FrameEventArgs : EventArgs
     {
-        double elapsed;
+        TimeSpan elapsed;
 
         /// <summary>
         /// Constructs a new FrameEventArgs instance. 
@@ -48,7 +48,7 @@ namespace OpenTK
         /// Constructs a new FrameEventArgs instance. 
         /// </summary>
         /// <param name="elapsed">The amount of time that has elapsed since the previous event, in seconds.</param>
-        public FrameEventArgs(double elapsed)
+        public FrameEventArgs(TimeSpan elapsed)
         {
             Time = elapsed;
         }
@@ -56,12 +56,12 @@ namespace OpenTK
         /// <summary>
         /// Gets a <see cref="System.Double"/> that indicates how many seconds of time elapsed since the previous event.
         /// </summary>
-        public double Time 
+        public TimeSpan Time 
         {
             get { return elapsed; }
             internal set
             {
-                if (value <= 0)
+                if (value <= TimeSpan.Zero)
                     throw new ArgumentOutOfRangeException();
                 elapsed = value;
             }

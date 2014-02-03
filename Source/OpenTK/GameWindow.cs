@@ -76,6 +76,8 @@ namespace OpenTK
         #region --- Fields ---
 
         const double MaxFrequency = 500.0; // Frequency cap for Update/RenderFrame events
+        readonly static TimeSpan MinFrameTime = TimeSpan.FromSeconds(1 / MaxFrequency);
+        readonly static TimeSpan Second = TimeSpan.FromTicks(TimeSpan.TicksPerSecond);
 
         readonly Stopwatch watch = new Stopwatch();
         readonly IJoystickDriver LegacyJoystick =
@@ -85,16 +87,16 @@ namespace OpenTK
 
         bool isExiting = false;
 
-        double update_period, render_period;
-        double target_update_period, target_render_period;
-        
-        double update_time; // length of last UpdateFrame event
-        double render_time; // length of last RenderFrame event
+        TimeSpan update_period, render_period;
+        TimeSpan target_update_period, target_render_period;
 
-        double update_timestamp; // timestamp of last UpdateFrame event
-        double render_timestamp; // timestamp of last RenderFrame event
+        TimeSpan update_time; // length of last UpdateFrame event
+        TimeSpan render_time; // length of last RenderFrame event
 
-        double update_epsilon; // quantization error for UpdateFrame events
+        TimeSpan update_timestamp; // timestamp of last UpdateFrame event
+        TimeSpan render_timestamp; // timestamp of last RenderFrame event
+
+        TimeSpan update_epsilon; // quantization error for UpdateFrame events
 
         bool is_running_slowly; // true, when UpdatePeriod cannot reach TargetUpdatePeriod
 
@@ -439,19 +441,27 @@ namespace OpenTK
             }
         }
 
-        double ClampElapsed(double elapsed)
+
+        void ClampElapsed(ref TimeSpan elapsed)
         {
-            return MathHelper.Clamp(elapsed, 0.0, 1.0);
+            if (elapsed > Second)
+            {
+                elapsed = Second;
+            }
+            else if (elapsed < TimeSpan.Zero)
+            {
+                elapsed = TimeSpan.Zero;
+            }
         }
 
         void DispatchUpdateAndRenderFrame(object sender, EventArgs e)
         {
             int is_running_slowly_retries = 4;
-            double timestamp = watch.Elapsed.TotalSeconds;
-            double elapsed = 0;
+            var timestamp = watch.Elapsed;
+            var elapsed = timestamp - update_timestamp;
 
-            elapsed = ClampElapsed(timestamp - update_timestamp);
-            while (elapsed > 0 && elapsed + update_epsilon >= TargetUpdatePeriod)
+            ClampElapsed(ref elapsed);
+            while (elapsed > TimeSpan.Zero && elapsed + update_epsilon >= TargetUpdatePeriod)
             {
                 RaiseUpdateFrame(elapsed, ref timestamp);
                 
@@ -461,9 +471,10 @@ namespace OpenTK
                 update_epsilon += elapsed - TargetUpdatePeriod;
 
                 // Prepare for next loop
-                elapsed = ClampElapsed(timestamp - update_timestamp);
+                elapsed = timestamp - update_timestamp;
+                ClampElapsed(ref elapsed);
 
-                if (TargetUpdatePeriod <= Double.Epsilon)
+                if (TargetUpdatePeriod <= TimeSpan.Zero)
                 {
                     // According to the TargetUpdatePeriod documentation,
                     // a TargetUpdatePeriod of zero means we will raise
@@ -481,14 +492,15 @@ namespace OpenTK
                 }
             }
 
-            elapsed = ClampElapsed(timestamp - render_timestamp);
-            if (elapsed > 0 && elapsed >= TargetRenderPeriod)
+            elapsed = timestamp - update_timestamp;
+            ClampElapsed(ref elapsed);
+            if (elapsed > TimeSpan.Zero && elapsed >= TargetRenderPeriod)
             {
                 RaiseRenderFrame(elapsed, ref timestamp);
             }
         }
 
-        void RaiseUpdateFrame(double elapsed, ref double timestamp)
+        void RaiseUpdateFrame(TimeSpan elapsed, ref TimeSpan timestamp)
         {
             // Raise UpdateFrame event
             update_args.Time = elapsed;
@@ -499,12 +511,12 @@ namespace OpenTK
 
             // Update UpdateTime property
             update_timestamp = timestamp;
-            timestamp = watch.Elapsed.TotalSeconds;
+            timestamp = watch.Elapsed;
             update_time = timestamp - update_timestamp;
         }
 
 
-        void RaiseRenderFrame(double elapsed, ref double timestamp)
+        void RaiseRenderFrame(TimeSpan elapsed, ref TimeSpan timestamp)
         {
             // Raise RenderFrame event
             render_args.Time = elapsed;
@@ -515,7 +527,7 @@ namespace OpenTK
 
             // Update RenderTime property
             render_timestamp = timestamp;
-            timestamp = watch.Elapsed.TotalSeconds;
+            timestamp = watch.Elapsed;
             render_time = timestamp - render_timestamp;
         }
 
@@ -634,9 +646,9 @@ namespace OpenTK
             get
             {
                 EnsureUndisposed();
-                if (render_period == 0.0)
+                if (render_period == TimeSpan.Zero)
                     return 1.0;
-                return 1.0 / render_period;
+                return 1.0 / render_period.TotalSeconds;
             }
         }
 
@@ -645,9 +657,9 @@ namespace OpenTK
         #region RenderPeriod
 
         /// <summary>
-        /// Gets a double representing the period of RenderFrame events, in seconds.
+        /// Gets a TimeSpan representing the period of RenderFrame events.
         /// </summary>
-        public double RenderPeriod
+        public TimeSpan RenderPeriod
         {
             get
             {
@@ -661,9 +673,9 @@ namespace OpenTK
         #region RenderTime
 
         /// <summary>
-        /// Gets a double representing the time spent in the RenderFrame function, in seconds.
+        /// Gets a TimeSpan representing the time spent in the RenderFrame function.
         /// </summary>
-        public double RenderTime
+        public TimeSpan RenderTime
         {
             get
             {
@@ -693,20 +705,20 @@ namespace OpenTK
             get
             {
                 EnsureUndisposed();
-                if (TargetRenderPeriod == 0.0)
+                if (TargetRenderPeriod == TimeSpan.Zero)
                     return 0.0;
-                return 1.0 / TargetRenderPeriod;
+                return 1.0 / TargetRenderPeriod.Seconds;
             }
             set
             {
                 EnsureUndisposed();
                 if (value < 1.0)
                 {
-                    TargetRenderPeriod = 0.0;
+                    TargetRenderPeriod = TimeSpan.Zero;
                 }
                 else if (value <= MaxFrequency)
                 {
-                    TargetRenderPeriod = 1.0 / value;
+                    TargetRenderPeriod = TimeSpan.FromSeconds(1.0 / value);
                 }
                 else Debug.Print("Target render frequency clamped to {0}Hz.", MaxFrequency);
             }
@@ -717,13 +729,13 @@ namespace OpenTK
         #region TargetRenderPeriod
 
         /// <summary>
-        /// Gets or sets a double representing the target render period, in seconds.
+        /// Gets or sets a TimeSpan representing the target render period.
         /// </summary>
         /// <remarks>
-        /// <para>A value of 0.0 indicates that RenderFrame events are generated at the maximum possible frequency (i.e. only limited by the hardware's capabilities).</para>
+        /// <para>A value of TimeSpan.Zero indicates that RenderFrame events are generated at the maximum possible frequency (i.e. only limited by the hardware's capabilities).</para>
         /// <para>Values lower than 0.002 seconds (500Hz) are clamped to 0.0. Values higher than 1.0 seconds (1Hz) are clamped to 1.0.</para>
         /// </remarks>
-        public double TargetRenderPeriod
+        public TimeSpan TargetRenderPeriod
         {
             get
             {
@@ -733,11 +745,11 @@ namespace OpenTK
             set
             {
                 EnsureUndisposed();
-                if (value <= 1 / MaxFrequency)
+                if (value <= MinFrameTime)
                 {
-                    target_render_period = 0.0;
+                    target_render_period = TimeSpan.Zero;
                 }
-                else if (value <= 1.0)
+                else if (value <= Second)
                 {
                     target_render_period = value;
                 }
@@ -761,20 +773,20 @@ namespace OpenTK
             get
             {
                 EnsureUndisposed();
-                if (TargetUpdatePeriod == 0.0)
+                if (TargetUpdatePeriod == TimeSpan.Zero)
                     return 0.0;
-                return 1.0 / TargetUpdatePeriod;
+                return 1.0 / TargetUpdatePeriod.TotalSeconds;
             }
             set
             {
                 EnsureUndisposed();
                 if (value < 1.0)
                 {
-                    TargetUpdatePeriod = 0.0;
+                    TargetUpdatePeriod = TimeSpan.Zero;
                 }
                 else if (value <= MaxFrequency)
                 {
-                    TargetUpdatePeriod = 1.0 / value;
+                    TargetUpdatePeriod = TimeSpan.FromSeconds(1.0 / value);
                 }
                 else Debug.Print("Target render frequency clamped to {0}Hz.", MaxFrequency);
             }
@@ -785,13 +797,13 @@ namespace OpenTK
         #region TargetUpdatePeriod
 
         /// <summary>
-        /// Gets or sets a double representing the target update period, in seconds.
+        /// Gets or sets a TimeSpan representing the target update period.
         /// </summary>
         /// <remarks>
-        /// <para>A value of 0.0 indicates that UpdateFrame events are generated at the maximum possible frequency (i.e. only limited by the hardware's capabilities).</para>
+        /// <para>A value of TimeSpan.Zero indicates that UpdateFrame events are generated at the maximum possible frequency (i.e. only limited by the hardware's capabilities).</para>
         /// <para>Values lower than 0.002 seconds (500Hz) are clamped to 0.0. Values higher than 1.0 seconds (1Hz) are clamped to 1.0.</para>
         /// </remarks>
-        public double TargetUpdatePeriod
+        public TimeSpan TargetUpdatePeriod
         {
             get
             {
@@ -801,11 +813,11 @@ namespace OpenTK
             set
             {
                 EnsureUndisposed();
-                if (value <= 1 / MaxFrequency)
+                if (value <= MinFrameTime)
                 {
-                    target_update_period = 0.0;
+                    target_update_period = TimeSpan.Zero;
                 }
-                else if (value <= 1.0)
+                else if (value <= Second)
                 {
                     target_update_period = value;
                 }
@@ -825,9 +837,9 @@ namespace OpenTK
             get
             {
                 EnsureUndisposed();
-                if (update_period == 0.0)
+                if (update_period == TimeSpan.Zero)
                     return 1.0;
-                return 1.0 / update_period;
+                return 1 / update_period.TotalSeconds;
             }
         }
 
@@ -836,9 +848,9 @@ namespace OpenTK
         #region UpdatePeriod
 
         /// <summary>
-        /// Gets a double representing the period of UpdateFrame events, in seconds.
+        /// Gets a TimeSpan representing the period of UpdateFrame events.
         /// </summary>
-        public double UpdatePeriod
+        public TimeSpan UpdatePeriod
         {
             get
             {
@@ -852,9 +864,9 @@ namespace OpenTK
         #region UpdateTime
 
         /// <summary>
-        /// Gets a double representing the time spent in the UpdateFrame function, in seconds.
+        /// Gets a TimeSpan representing the time spent in the UpdateFrame function.
         /// </summary>
-        public double UpdateTime
+        public TimeSpan UpdateTime
         {
             get
             {
